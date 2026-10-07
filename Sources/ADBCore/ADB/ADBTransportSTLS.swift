@@ -228,7 +228,29 @@ final class ADBTransportSTLS: NSObject, @unchecked Sendable, ADBClientTransport 
         guard isCurrent(currentTask) else { throw ADBError.connectionClosed }
         let shouldSkipChecksum = stateLock.withLock { skipChecksum }
         guard message.isValid(skipChecksum: shouldSkipChecksum) else {
-            throw ADBError.protocolError("Message validation failed")
+            let calculatedCRC = ADBMessage.checksum(message.data)
+        
+            Self.log.error(
+                """
+                ADB validation failed:
+                command=0x\(String(format: "%08X", message.command), privacy: .public)
+                arg0=0x\(String(format: "%08X", message.arg0), privacy: .public)
+                arg1=0x\(String(format: "%08X", message.arg1), privacy: .public)
+                length=\(message.data.count, privacy: .public)
+                receivedCRC=0x\(String(format: "%08X", message.dataCRC32), privacy: .public)
+                calculatedCRC=0x\(String(format: "%08X", calculatedCRC), privacy: .public)
+                magic=0x\(String(format: "%08X", message.magic), privacy: .public)
+                expectedMagic=0x\(String(format: "%08X", message.command ^ 0xFFFFFFFF), privacy: .public)
+                skipChecksum=\(shouldSkipChecksum, privacy: .public)
+                """
+            )
+        
+            throw ADBError.protocolError(
+                "Message validation failed: "
+                + "cmd=0x\(String(format: "%08X", message.command)) "
+                + "crc=0x\(String(format: "%08X", message.dataCRC32))/"
+                + "0x\(String(format: "%08X", calculatedCRC))"
+            )
         }
 
         if message.commandType == .connect && message.arg0 >= ADBMessage.version {
