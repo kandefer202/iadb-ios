@@ -1,4 +1,3 @@
-```swift
 import SwiftUI
 import UIKit
 
@@ -189,4 +188,3 @@ private extension Comparable {
         min(max(self, range.lowerBound), range.upperBound)
     }
 }
-```
