@@ -36,6 +36,9 @@ jobs:
           echo "=== App ==="
           find iADBApp -maxdepth 2 -type f -print | sort
 
+          echo "=== Info.plist ==="
+          cat iADBApp/Info.plist
+
       - name: Generate Xcode project
         run: |
           cat > generate_project.rb <<'RUBY'
@@ -97,8 +100,6 @@ jobs:
               end
             end
 
-            # Use absolute path to prevent Xcode from duplicating
-            # Sources/ADBCore in the build input path.
             ref = current_group.new_file(File.expand_path(path))
             core_file_refs << ref
           end
@@ -131,15 +132,19 @@ jobs:
             config.build_settings["SWIFT_VERSION"] = "6.0"
             config.build_settings["IPHONEOS_DEPLOYMENT_TARGET"] = "17.0"
 
+            # IMPORTANT:
+            # Use the real Info.plist file from the repository.
             config.build_settings["INFOPLIST_FILE"] =
               File.expand_path("iADBApp/Info.plist")
 
             config.build_settings["GENERATE_INFOPLIST_FILE"] = "NO"
+
             config.build_settings["TARGETED_DEVICE_FAMILY"] = "1,2"
 
             config.build_settings["SWIFT_STRICT_CONCURRENCY"] = "minimal"
             config.build_settings["CLANG_ENABLE_MODULES"] = "YES"
 
+            # Signing is performed later by iPASide.
             config.build_settings["CODE_SIGNING_ALLOWED"] = "NO"
             config.build_settings["CODE_SIGNING_REQUIRED"] = "NO"
             config.build_settings["CODE_SIGN_IDENTITY"] = ""
@@ -155,22 +160,21 @@ jobs:
           # App source files
           # ============================================================
 
+          # DO NOT add Info.plist as a source/build-phase file.
+          # Xcode handles it through INFOPLIST_FILE above.
+
           app_files = [
             "iADBApp.swift",
             "ContentView.swift",
-            "ADBViewModel.swift",
+            "ADBViewModel.swift"
           ]
 
           app_source_refs = []
 
           app_files.each do |filename|
             path = File.expand_path("iADBApp/#{filename}")
-
             ref = app_group.new_file(path)
-
-            if filename.end_with?(".swift")
-              app_source_refs << ref
-            end
+            app_source_refs << ref
           end
 
           app_source_refs.each do |ref|
@@ -233,6 +237,8 @@ jobs:
 
           echo "=== Source files ==="
           find iADBApp -maxdepth 1 -type f -print
+
+          echo "=== ADBCore files ==="
           find Sources/ADBCore -type f -name "*.swift" | sort
 
       - name: Build archive
@@ -252,16 +258,65 @@ jobs:
             CODE_SIGN_IDENTITY="" \
             archive
 
-      - name: Find application
+      - name: Verify application bundle
         run: |
-          echo "=== Archive ==="
-          find build/iADB.xcarchive -maxdepth 5 -print
-
-          echo "=== APP ==="
-          find build/iADB.xcarchive \
+          APP_PATH=$(find \
+            build/iADB.xcarchive/Products/Applications \
+            -maxdepth 1 \
             -type d \
             -name "*.app" \
-            -print
+            | head -n 1)
+
+          if [ -z "$APP_PATH" ]; then
+            echo "ERROR: .app was not found"
+            exit 1
+          fi
+
+          echo "=== APP PATH ==="
+          echo "$APP_PATH"
+
+          echo "=== APP CONTENTS ==="
+          find "$APP_PATH" -maxdepth 2 -print | sort
+
+          echo "=== Info.plist ==="
+
+          if [ ! -f "$APP_PATH/Info.plist" ]; then
+            echo "ERROR: Info.plist is missing from the application bundle!"
+            exit 1
+          fi
+
+          ls -lh "$APP_PATH/Info.plist"
+
+          echo "=== Bundle information ==="
+
+          /usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" \
+            "$APP_PATH/Info.plist"
+
+          /usr/libexec/PlistBuddy -c "Print :CFBundleVersion" \
+            "$APP_PATH/Info.plist"
+
+          /usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" \
+            "$APP_PATH/Info.plist"
+
+          /usr/libexec/PlistBuddy -c "Print :CFBundleExecutable" \
+            "$APP_PATH/Info.plist"
+
+          echo "=== Executable ==="
+
+          EXECUTABLE=$(
+            /usr/libexec/PlistBuddy \
+              -c "Print :CFBundleExecutable" \
+              "$APP_PATH/Info.plist"
+          )
+
+          if [ ! -f "$APP_PATH/$EXECUTABLE" ]; then
+            echo "ERROR: Bundle executable '$EXECUTABLE' is missing!"
+            exit 1
+          fi
+
+          ls -lh "$APP_PATH/$EXECUTABLE"
+
+          echo "=== Bundle verification OK ==="
 
       - name: Create IPA
         run: |
@@ -291,6 +346,9 @@ jobs:
 
           echo "=== IPA ==="
           ls -lh build/iADB.ipa
+
+          echo "=== IPA CONTENTS ==="
+          unzip -l build/iADB.ipa
 
       - name: Upload IPA artifact
         uses: actions/upload-artifact@v4
