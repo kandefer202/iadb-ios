@@ -159,7 +159,6 @@ jobs:
             "iADBApp.swift",
             "ContentView.swift",
             "ADBViewModel.swift",
-            "Info.plist"
           ]
 
           app_source_refs = []
