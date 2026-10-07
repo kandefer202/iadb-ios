@@ -164,7 +164,6 @@ jobs:
 
           app_source_refs = []
 
-          app_source_refs = []
 
           app_files.each do |filename|
             path = File.expand_path("iADBApp/#{filename}")
