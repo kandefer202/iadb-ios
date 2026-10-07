@@ -156,20 +156,21 @@ jobs:
           # ------------------------------------------------------------
 
           app_files = [
-            "iADBApp/iADBApp.swift",
-            "iADBApp/ContentView.swift",
-            "iADBApp/ADBViewModel.swift",
-            "iADBApp/Info.plist"
+            "iADBApp.swift",
+            "ContentView.swift",
+            "ADBViewModel.swift",
+            "Info.plist"
           ]
 
           app_source_refs = []
 
-          app_files.each do |path|
-            ref = app_group.new_file(path)
+          app_source_refs = []
 
-            if path.end_with?(".swift")
-              app_source_refs << ref
-            end
+          app_files.each do |filename|
+            path = File.expand_path("iADBApp/#{filename}")
+          
+            ref = app_group.new_file(path)
+            app_source_refs << ref if filename.end_with?(".swift")
           end
 
           app_source_refs.each do |ref|
