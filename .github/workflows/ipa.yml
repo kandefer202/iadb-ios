@@ -8,29 +8,294 @@ permissions:
 
 jobs:
   build:
-    runs-on: xcode-27
+    runs-on: macos-26
     timeout-minutes: 30
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Show files
+      - name: Select Xcode
         run: |
-          echo "=== ROOT ==="
-          ls -la
-          echo "=== XCODE PROJECTS ==="
-          find . -maxdepth 3 \( -name "*.xcodeproj" -o -name "*.xcworkspace" -o -name "Package.swift" \) -print
+          sudo xcode-select -s /Applications/Xcode.app
+          xcodebuild -version
+          swift --version
 
-      - name: Build ADBCore
+      - name: Install xcodeproj
+        run: |
+          gem install xcodeproj --no-document
+
+      - name: Check repository
+        run: |
+          echo "=== Repository ==="
+          ls -la
+
+          echo "=== ADBCore ==="
+          find Sources/ADBCore -type f -name "*.swift" | sort
+
+          echo "=== App ==="
+          find iADBApp -maxdepth 2 -type f -print | sort
+
+      - name: Generate Xcode project
+        run: |
+          cat > generate_project.rb <<'RUBY'
+          require "xcodeproj"
+          require "fileutils"
+
+          PROJECT_NAME = "iADBApp"
+          PROJECT_PATH = "#{PROJECT_NAME}.xcodeproj"
+
+          FileUtils.rm_rf(PROJECT_PATH)
+
+          project = Xcodeproj::Project.new(PROJECT_PATH)
+
+          project.root_object.attributes["LastUpgradeCheck"] = "2700"
+          project.root_object.attributes["ORGANIZATIONNAME"] = "Filip"
+
+          # ------------------------------------------------------------
+          # Groups
+          # ------------------------------------------------------------
+
+          app_group = project.main_group.new_group("iADBApp", "iADBApp")
+          sources_root = project.main_group.new_group("Sources", "Sources")
+          core_group = sources_root.new_group("ADBCore", "ADBCore")
+
+          # ------------------------------------------------------------
+          # ADBCore target
+          # ------------------------------------------------------------
+
+          core_target = project.new_target(
+            :static_library,
+            "ADBCore",
+            :ios,
+            "17.0"
+          )
+
+          core_target.product_name = "ADBCore"
+
+          core_target.build_configurations.each do |config|
+            config.build_settings["PRODUCT_MODULE_NAME"] = "ADBCore"
+            config.build_settings["SWIFT_VERSION"] = "6.0"
+            config.build_settings["IPHONEOS_DEPLOYMENT_TARGET"] = "17.0"
+            config.build_settings["DEFINES_MODULE"] = "YES"
+            config.build_settings["SKIP_INSTALL"] = "YES"
+            config.build_settings["BUILD_LIBRARY_FOR_DISTRIBUTION"] = "NO"
+            config.build_settings["SWIFT_STRICT_CONCURRENCY"] = "minimal"
+            config.build_settings["CLANG_ENABLE_MODULES"] = "YES"
+          end
+
+          # ------------------------------------------------------------
+          # Add all ADBCore Swift sources
+          # ------------------------------------------------------------
+
+          core_files = Dir.glob("Sources/ADBCore/**/*.swift").sort
+
+          core_file_refs = []
+
+          core_files.each do |path|
+            relative = path.sub(%r{\ASources/ADBCore/}, "")
+            parts = relative.split("/")
+
+            current_group = core_group
+
+            parts[0...-1].each do |part|
+              existing = current_group.groups.find { |g| g.name == part }
+
+              if existing
+                current_group = existing
+              else
+                current_group = current_group.new_group(part, part)
+              end
+            end
+
+            file_name = parts.last
+
+            ref = current_group.new_file(path)
+            core_file_refs << ref
+          end
+
+          core_file_refs.each do |ref|
+            core_target.source_build_phase.add_file_reference(ref)
+          end
+
+          # ------------------------------------------------------------
+          # iADB application target
+          # ------------------------------------------------------------
+
+          app_target = project.new_target(
+            :application,
+            "iADBApp",
+            :ios,
+            "17.0"
+          )
+
+          app_target.product_name = "iADB"
+
+          app_target.build_configurations.each do |config|
+            config.build_settings["PRODUCT_BUNDLE_IDENTIFIER"] = "com.filip.iadb"
+            config.build_settings["PRODUCT_NAME"] = "iADB"
+            config.build_settings["SWIFT_VERSION"] = "6.0"
+            config.build_settings["IPHONEOS_DEPLOYMENT_TARGET"] = "17.0"
+            config.build_settings["INFOPLIST_FILE"] = "iADBApp/Info.plist"
+            config.build_settings["GENERATE_INFOPLIST_FILE"] = "NO"
+            config.build_settings["TARGETED_DEVICE_FAMILY"] = "1,2"
+            config.build_settings["SWIFT_STRICT_CONCURRENCY"] = "minimal"
+            config.build_settings["CLANG_ENABLE_MODULES"] = "YES"
+            config.build_settings["CODE_SIGNING_ALLOWED"] = "NO"
+            config.build_settings["CODE_SIGNING_REQUIRED"] = "NO"
+            config.build_settings["CODE_SIGN_IDENTITY"] = ""
+            config.build_settings["DEVELOPMENT_TEAM"] = ""
+            config.build_settings["LD_RUNPATH_SEARCH_PATHS"] = [
+              "$(inherited)",
+              "@executable_path/Frameworks"
+            ]
+          end
+
+          # ------------------------------------------------------------
+          # App source files
+          # ------------------------------------------------------------
+
+          app_files = [
+            "iADBApp/iADBApp.swift",
+            "iADBApp/ContentView.swift",
+            "iADBApp/ADBViewModel.swift",
+            "iADBApp/Info.plist"
+          ]
+
+          app_source_refs = []
+
+          app_files.each do |path|
+            ref = app_group.new_file(path)
+
+            if path.end_with?(".swift")
+              app_source_refs << ref
+            end
+          end
+
+          app_source_refs.each do |ref|
+            app_target.source_build_phase.add_file_reference(ref)
+          end
+
+          # ------------------------------------------------------------
+          # Frameworks
+          # ------------------------------------------------------------
+
+          frameworks = [
+            "System/Library/Frameworks/Foundation.framework",
+            "System/Library/Frameworks/Network.framework",
+            "System/Library/Frameworks/Security.framework",
+            "System/Library/Frameworks/CryptoKit.framework",
+            "System/Library/Frameworks/SwiftUI.framework"
+          ]
+
+          frameworks.each do |framework|
+            ref = project.frameworks_group.new_file(
+              "/Applications/Xcode.app/Contents/Developer/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS.sdk/#{framework}"
+            )
+
+            app_target.frameworks_build_phase.add_file_reference(ref, true)
+          end
+
+          # ------------------------------------------------------------
+          # Target dependency
+          # ------------------------------------------------------------
+
+          app_target.add_dependency(core_target)
+
+          core_product = core_target.product_reference
+
+          app_target.frameworks_build_phase.add_file_reference(
+            core_product,
+            true
+          )
+
+          # ------------------------------------------------------------
+          # Build phases / settings
+          # ------------------------------------------------------------
+
+          app_target.resources_build_phase
+
+          project.save
+
+          puts "Generated #{PROJECT_PATH}"
+          RUBY
+
+          ruby generate_project.rb
+
+      - name: Show Xcode project
+        run: |
+          echo "=== Project ==="
+          find iADBApp.xcodeproj -maxdepth 2 -type f -print
+
+      - name: Resolve Swift package dependencies
         run: |
           xcodebuild \
-            -scheme ADBCore \
-            -configuration Release \
-            -destination 'generic/platform=iOS' \
-            CODE_SIGNING_ALLOWED=NO \
-            build
+            -project iADBApp.xcodeproj \
+            -scheme iADBApp \
+            -resolvePackageDependencies
 
-      - name: List build products
+      - name: Build archive
         run: |
-          find . -type d -name "*.app" -o -type f -name "*.framework"
+          rm -rf build
+          mkdir -p build
+
+          xcodebuild \
+            -project iADBApp.xcodeproj \
+            -scheme iADBApp \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination "generic/platform=iOS" \
+            -archivePath "$PWD/build/iADB.xcarchive" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            archive
+
+      - name: Find application
+        run: |
+          echo "=== Archive ==="
+          find build/iADB.xcarchive -maxdepth 5 -print
+
+          echo "=== APP ==="
+          find build/iADB.xcarchive -type d -name "*.app" -print
+
+      - name: Create IPA
+        run: |
+          APP_PATH=$(find build/iADB.xcarchive/Products/Applications -maxdepth 1 -type d -name "*.app" | head -n 1)
+
+          if [ -z "$APP_PATH" ]; then
+            echo "ERROR: .app was not found"
+            exit 1
+          fi
+
+          echo "Using:"
+          echo "$APP_PATH"
+
+          rm -rf build/Payload
+          mkdir -p build/Payload
+
+          cp -R "$APP_PATH" build/Payload/
+
+          cd build
+          zip -r iADB.ipa Payload
+
+          cd ..
+
+          echo "=== IPA ==="
+          ls -lh build/iADB.ipa
+
+      - name: Upload IPA artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: iADB-unsigned-ipa
+          path: build/iADB.ipa
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload Xcode archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: iADB-xcarchive
+          path: build/iADB.xcarchive
+          if-no-files-found: error
+          retention-days: 7
