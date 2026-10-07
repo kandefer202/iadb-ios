@@ -52,17 +52,12 @@ jobs:
           project.root_object.attributes["LastUpgradeCheck"] = "2700"
           project.root_object.attributes["ORGANIZATIONNAME"] = "Filip"
 
-          # ------------------------------------------------------------
-          # Groups
-          # ------------------------------------------------------------
+          # ============================================================
+          # ADBCore
+          # ============================================================
 
-          app_group = project.main_group.new_group("iADBApp", "iADBApp")
           sources_root = project.main_group.new_group("Sources", "Sources")
           core_group = sources_root.new_group("ADBCore", "ADBCore")
-
-          # ------------------------------------------------------------
-          # ADBCore target
-          # ------------------------------------------------------------
 
           core_target = project.new_target(
             :static_library,
@@ -84,18 +79,12 @@ jobs:
             config.build_settings["CLANG_ENABLE_MODULES"] = "YES"
           end
 
-          # ------------------------------------------------------------
-          # Add all ADBCore Swift sources
-          # ------------------------------------------------------------
-
           core_files = Dir.glob("Sources/ADBCore/**/*.swift").sort
-
           core_file_refs = []
 
           core_files.each do |path|
             relative = path.sub(%r{\ASources/ADBCore/}, "")
             parts = relative.split("/")
-
             current_group = core_group
 
             parts[0...-1].each do |part|
@@ -108,8 +97,8 @@ jobs:
               end
             end
 
-            file_name = parts.last
-
+            # Use absolute path to prevent Xcode from duplicating
+            # Sources/ADBCore in the build input path.
             ref = current_group.new_file(File.expand_path(path))
             core_file_refs << ref
           end
@@ -118,9 +107,14 @@ jobs:
             core_target.source_build_phase.add_file_reference(ref)
           end
 
-          # ------------------------------------------------------------
-          # iADB application target
-          # ------------------------------------------------------------
+          # ============================================================
+          # iOS Application
+          # ============================================================
+
+          app_group = project.main_group.new_group(
+            "iADBApp",
+            "iADBApp"
+          )
 
           app_target = project.new_target(
             :application,
@@ -136,24 +130,30 @@ jobs:
             config.build_settings["PRODUCT_NAME"] = "iADB"
             config.build_settings["SWIFT_VERSION"] = "6.0"
             config.build_settings["IPHONEOS_DEPLOYMENT_TARGET"] = "17.0"
-            config.build_settings["INFOPLIST_FILE"] = "iADBApp/Info.plist"
+
+            config.build_settings["INFOPLIST_FILE"] =
+              File.expand_path("iADBApp/Info.plist")
+
             config.build_settings["GENERATE_INFOPLIST_FILE"] = "NO"
             config.build_settings["TARGETED_DEVICE_FAMILY"] = "1,2"
+
             config.build_settings["SWIFT_STRICT_CONCURRENCY"] = "minimal"
             config.build_settings["CLANG_ENABLE_MODULES"] = "YES"
+
             config.build_settings["CODE_SIGNING_ALLOWED"] = "NO"
             config.build_settings["CODE_SIGNING_REQUIRED"] = "NO"
             config.build_settings["CODE_SIGN_IDENTITY"] = ""
             config.build_settings["DEVELOPMENT_TEAM"] = ""
+
             config.build_settings["LD_RUNPATH_SEARCH_PATHS"] = [
               "$(inherited)",
               "@executable_path/Frameworks"
             ]
           end
 
-          # ------------------------------------------------------------
+          # ============================================================
           # App source files
-          # ------------------------------------------------------------
+          # ============================================================
 
           app_files = [
             "iADBApp.swift",
@@ -164,21 +164,27 @@ jobs:
 
           app_source_refs = []
 
-
           app_files.each do |filename|
             path = File.expand_path("iADBApp/#{filename}")
-          
+
             ref = app_group.new_file(path)
-            app_source_refs << ref if filename.end_with?(".swift")
+
+            if filename.end_with?(".swift")
+              app_source_refs << ref
+            end
           end
 
           app_source_refs.each do |ref|
             app_target.source_build_phase.add_file_reference(ref)
           end
 
-          # ------------------------------------------------------------
-          # Frameworks
-          # ------------------------------------------------------------
+          # ============================================================
+          # System frameworks
+          # ============================================================
+
+          sdk_path =
+            "/Applications/Xcode.app/Contents/Developer/" \
+            "Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS.sdk"
 
           frameworks = [
             "System/Library/Frameworks/Foundation.framework",
@@ -190,30 +196,29 @@ jobs:
 
           frameworks.each do |framework|
             ref = project.frameworks_group.new_file(
-              "/Applications/Xcode.app/Contents/Developer/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS.sdk/#{framework}"
+              File.join(sdk_path, framework)
             )
 
-            app_target.frameworks_build_phase.add_file_reference(ref, true)
+            app_target.frameworks_build_phase.add_file_reference(
+              ref,
+              true
+            )
           end
 
-          # ------------------------------------------------------------
-          # Target dependency
-          # ------------------------------------------------------------
+          # ============================================================
+          # ADBCore dependency
+          # ============================================================
 
           app_target.add_dependency(core_target)
 
-          core_product = core_target.product_reference
-
           app_target.frameworks_build_phase.add_file_reference(
-            core_product,
+            core_target.product_reference,
             true
           )
 
-          # ------------------------------------------------------------
-          # Build phases / settings
-          # ------------------------------------------------------------
-
-          app_target.resources_build_phase
+          # ============================================================
+          # Save project
+          # ============================================================
 
           project.save
 
@@ -222,17 +227,14 @@ jobs:
 
           ruby generate_project.rb
 
-      - name: Show Xcode project
+      - name: Verify generated project
         run: |
-          echo "=== Project ==="
+          echo "=== Xcode project ==="
           find iADBApp.xcodeproj -maxdepth 2 -type f -print
 
-      - name: Resolve Swift package dependencies
-        run: |
-          xcodebuild \
-            -project iADBApp.xcodeproj \
-            -scheme iADBApp \
-            -resolvePackageDependencies
+          echo "=== Source files ==="
+          find iADBApp -maxdepth 1 -type f -print
+          find Sources/ADBCore -type f -name "*.swift" | sort
 
       - name: Build archive
         run: |
@@ -257,11 +259,19 @@ jobs:
           find build/iADB.xcarchive -maxdepth 5 -print
 
           echo "=== APP ==="
-          find build/iADB.xcarchive -type d -name "*.app" -print
+          find build/iADB.xcarchive \
+            -type d \
+            -name "*.app" \
+            -print
 
       - name: Create IPA
         run: |
-          APP_PATH=$(find build/iADB.xcarchive/Products/Applications -maxdepth 1 -type d -name "*.app" | head -n 1)
+          APP_PATH=$(find \
+            build/iADB.xcarchive/Products/Applications \
+            -maxdepth 1 \
+            -type d \
+            -name "*.app" \
+            | head -n 1)
 
           if [ -z "$APP_PATH" ]; then
             echo "ERROR: .app was not found"
@@ -278,7 +288,6 @@ jobs:
 
           cd build
           zip -r iADB.ipa Payload
-
           cd ..
 
           echo "=== IPA ==="
