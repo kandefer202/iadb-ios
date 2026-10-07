@@ -1,3 +1,4 @@
+```swift
 import SwiftUI
 import UIKit
 
@@ -37,16 +38,14 @@ struct ScreenView: View {
                         )
                         .contentShape(Rectangle())
                         .gesture(
-                            DragGesture(
-                                minimumDistance: 5
-                            )
-                            .onEnded { value in
-                                handleGesture(
-                                    value,
-                                    size: geometry.size,
-                                    image: image
-                                )
-                            }
+                            DragGesture(minimumDistance: 5)
+                                .onEnded { value in
+                                    handleGesture(
+                                        value,
+                                        size: geometry.size,
+                                        image: image
+                                    )
+                                }
                         )
                         .onTapGesture { location in
                             handleTap(
@@ -64,6 +63,7 @@ struct ScreenView: View {
                     Text("No screen")
                         .foregroundStyle(.white)
                 }
+                .frame(minHeight: 300)
             }
 
             if !vm.errorMessage.isEmpty {
@@ -140,48 +140,47 @@ struct ScreenView: View {
     ) {
         let start = value.startLocation
         let end = value.location
-    
+
         let imageSize = image.size
-    
+
         guard imageSize.width > 0, imageSize.height > 0 else {
             return
         }
-    
+
         let scale = min(
             size.width / imageSize.width,
             size.height / imageSize.height
         )
-    
+
         let displayedWidth = imageSize.width * scale
         let displayedHeight = imageSize.height * scale
-    
+
         let offsetX = (size.width - displayedWidth) / 2
         let offsetY = (size.height - displayedHeight) / 2
-    
+
         func convert(_ point: CGPoint) -> (Int, Int) {
             let x = Int(
                 ((point.x - offsetX) / scale)
                     .clamped(to: 0...imageSize.width)
             )
-    
+
             let y = Int(
                 ((point.y - offsetY) / scale)
                     .clamped(to: 0...imageSize.height)
             )
-    
+
             return (x, y)
         }
-    
+
         let p1 = convert(start)
         let p2 = convert(end)
-    
+
         vm.swipe(
             x1: p1.0,
             y1: p1.1,
             x2: p2.0,
             y2: p2.1
         )
-    }
     }
 }
 
@@ -190,3 +189,4 @@ private extension Comparable {
         min(max(self, range.lowerBound), range.upperBound)
     }
 }
+```
