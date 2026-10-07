@@ -110,7 +110,7 @@ jobs:
 
             file_name = parts.last
 
-            ref = current_group.new_file(path)
+            ref = current_group.new_file(File.expand_path(path))
             core_file_refs << ref
           end
 
