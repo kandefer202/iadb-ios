@@ -97,7 +97,16 @@ public struct ADBMessage: Sendable {
 
     func isValid(skipChecksum: Bool) -> Bool {
         guard command ^ magic == 0xFFFFFFFF else { return false }
-        if skipChecksum || isModernConnectWithZeroChecksum { return true }
+    
+        // AUTH messages use a zero checksum.
+        if commandType == .auth && dataCRC32 == 0 {
+            return true
+        }
+    
+        if skipChecksum || isModernConnectWithZeroChecksum {
+            return true
+        }
+    
         return dataCRC32 == ADBMessage.checksum(data)
     }
 
