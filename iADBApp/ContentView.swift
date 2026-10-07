@@ -10,9 +10,23 @@ struct ContentView: View {
                 VStack(alignment: .leading, spacing: 16) {
 
                     connectionSection
-
+                
                     deviceSection
-
+                
+                    if vm.isConnected {
+                        NavigationLink {
+                            ScreenView(
+                                vm: ScreenViewModel {
+                                    vm.client
+                                }
+                            )
+                        } label: {
+                            Label("Screen", systemImage: "iphone")
+                                .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(.borderedProminent)
+                    }
+                
                     terminalSection
                 }
                 .padding()
