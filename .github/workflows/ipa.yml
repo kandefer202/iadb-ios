@@ -18,7 +18,11 @@ jobs:
       - name: Select Xcode
         run: |
           sudo xcode-select -s /Applications/Xcode.app
+
+          echo "=== Xcode ==="
           xcodebuild -version
+
+          echo "=== Swift ==="
           swift --version
 
       - name: Install xcodeproj
@@ -39,6 +43,20 @@ jobs:
           echo "=== Info.plist ==="
           cat iADBApp/Info.plist
 
+      - name: Prepare source files
+        run: |
+          echo "Removing standalone ADBCore imports..."
+
+          sed -i '' '/^import ADBCore$/d' \
+            iADBApp/ADBViewModel.swift \
+            iADBApp/ScreenViewModel.swift
+
+          echo "=== ADBViewModel.swift imports ==="
+          head -n 10 iADBApp/ADBViewModel.swift
+
+          echo "=== ScreenViewModel.swift imports ==="
+          head -n 10 iADBApp/ScreenViewModel.swift
+
       - name: Generate Xcode project
         run: |
           cat > generate_project.rb <<'RUBY'
@@ -56,66 +74,8 @@ jobs:
           project.root_object.attributes["ORGANIZATIONNAME"] = "Filip"
 
           # ============================================================
-          # ADBCore
+          # Application target
           # ============================================================
-
-          sources_root = project.main_group.new_group("Sources", "Sources")
-          core_group = sources_root.new_group("ADBCore", "ADBCore")
-
-          core_target = project.new_target(
-            :static_library,
-            "ADBCore",
-            :ios,
-            "17.0"
-          )
-
-          core_target.product_name = "ADBCore"
-
-          core_target.build_configurations.each do |config|
-            config.build_settings["PRODUCT_MODULE_NAME"] = "ADBCore"
-            config.build_settings["SWIFT_VERSION"] = "6.0"
-            config.build_settings["IPHONEOS_DEPLOYMENT_TARGET"] = "17.0"
-            config.build_settings["DEFINES_MODULE"] = "YES"
-            config.build_settings["SKIP_INSTALL"] = "YES"
-            config.build_settings["BUILD_LIBRARY_FOR_DISTRIBUTION"] = "NO"
-            config.build_settings["SWIFT_STRICT_CONCURRENCY"] = "minimal"
-            config.build_settings["CLANG_ENABLE_MODULES"] = "YES"
-          end
-
-          core_files = Dir.glob("Sources/ADBCore/**/*.swift").sort
-          core_file_refs = []
-
-          core_files.each do |path|
-            relative = path.sub(%r{\ASources/ADBCore/}, "")
-            parts = relative.split("/")
-            current_group = core_group
-
-            parts[0...-1].each do |part|
-              existing = current_group.groups.find { |g| g.name == part }
-
-              if existing
-                current_group = existing
-              else
-                current_group = current_group.new_group(part, part)
-              end
-            end
-
-            ref = current_group.new_file(File.expand_path(path))
-            core_file_refs << ref
-          end
-
-          core_file_refs.each do |ref|
-            core_target.source_build_phase.add_file_reference(ref)
-          end
-
-          # ============================================================
-          # iOS Application
-          # ============================================================
-
-          app_group = project.main_group.new_group(
-            "iADBApp",
-            "iADBApp"
-          )
 
           app_target = project.new_target(
             :application,
@@ -129,11 +89,10 @@ jobs:
           app_target.build_configurations.each do |config|
             config.build_settings["PRODUCT_BUNDLE_IDENTIFIER"] = "com.filip.iadb"
             config.build_settings["PRODUCT_NAME"] = "iADB"
+
             config.build_settings["SWIFT_VERSION"] = "6.0"
             config.build_settings["IPHONEOS_DEPLOYMENT_TARGET"] = "17.0"
 
-            # IMPORTANT:
-            # Use the real Info.plist file from the repository.
             config.build_settings["INFOPLIST_FILE"] =
               File.expand_path("iADBApp/Info.plist")
 
@@ -144,7 +103,8 @@ jobs:
             config.build_settings["SWIFT_STRICT_CONCURRENCY"] = "minimal"
             config.build_settings["CLANG_ENABLE_MODULES"] = "YES"
 
-            # Signing is performed later by iPASide.
+            # Unsigned archive.
+            # iPASide will sign the IPA later.
             config.build_settings["CODE_SIGNING_ALLOWED"] = "NO"
             config.build_settings["CODE_SIGNING_REQUIRED"] = "NO"
             config.build_settings["CODE_SIGN_IDENTITY"] = ""
@@ -157,11 +117,17 @@ jobs:
           end
 
           # ============================================================
-          # App source files
+          # App group
           # ============================================================
 
-          # DO NOT add Info.plist as a source/build-phase file.
-          # Xcode handles it through INFOPLIST_FILE above.
+          app_group = project.main_group.new_group(
+            "iADBApp",
+            "iADBApp"
+          )
+
+          # ============================================================
+          # Application source files
+          # ============================================================
 
           app_files = [
             "iADBApp.swift",
@@ -171,16 +137,68 @@ jobs:
             "ScreenViewModel.swift"
           ]
 
-          app_source_refs = []
-
           app_files.each do |filename|
             path = File.expand_path("iADBApp/#{filename}")
+
             ref = app_group.new_file(path)
-            app_source_refs << ref
+
+            app_target.source_build_phase.add_file_reference(ref)
           end
 
-          app_source_refs.each do |ref|
+          # ============================================================
+          # ADBCore source files
+          #
+          # ADBCore is compiled directly into the application target.
+          # There is intentionally NO separate static library target.
+          # ============================================================
+
+          sources_root = project.main_group.new_group(
+            "Sources",
+            "Sources"
+          )
+
+          core_group = sources_root.new_group(
+            "ADBCore",
+            "ADBCore"
+          )
+
+          core_files = Dir.glob(
+            "Sources/ADBCore/**/*.swift"
+          ).sort
+
+          puts "=== ADBCore source files ==="
+
+          core_files.each do |path|
+            relative = path.sub(
+              %r{\ASources/ADBCore/},
+              ""
+            )
+
+            parts = relative.split("/")
+            current_group = core_group
+
+            parts[0...-1].each do |part|
+              existing = current_group.groups.find do |group|
+                group.name == part
+              end
+
+              if existing
+                current_group = existing
+              else
+                current_group = current_group.new_group(
+                  part,
+                  part
+                )
+              end
+            end
+
+            ref = current_group.new_file(
+              File.expand_path(path)
+            )
+
             app_target.source_build_phase.add_file_reference(ref)
+
+            puts "Added: #{path}"
           end
 
           # ============================================================
@@ -200,9 +218,12 @@ jobs:
           ]
 
           frameworks.each do |framework|
-            ref = project.frameworks_group.new_file(
-              File.join(sdk_path, framework)
+            path = File.join(
+              sdk_path,
+              framework
             )
+
+            ref = project.frameworks_group.new_file(path)
 
             app_target.frameworks_build_phase.add_file_reference(
               ref,
@@ -211,23 +232,15 @@ jobs:
           end
 
           # ============================================================
-          # ADBCore dependency
-          # ============================================================
-
-          app_target.add_dependency(core_target)
-
-          app_target.frameworks_build_phase.add_file_reference(
-            core_target.product_reference,
-            true
-          )
-
-          # ============================================================
-          # Save project
+          # Save
           # ============================================================
 
           project.save
 
+          puts ""
+          puts "========================================"
           puts "Generated #{PROJECT_PATH}"
+          puts "========================================"
           RUBY
 
           ruby generate_project.rb
@@ -237,11 +250,22 @@ jobs:
           echo "=== Xcode project ==="
           find iADBApp.xcodeproj -maxdepth 2 -type f -print
 
-          echo "=== Source files ==="
-          find iADBApp -maxdepth 1 -type f -print
+          echo ""
+          echo "=== App source files ==="
+          find iADBApp -maxdepth 1 -type f -name "*.swift" -print | sort
 
-          echo "=== ADBCore files ==="
+          echo ""
+          echo "=== ADBCore source files ==="
           find Sources/ADBCore -type f -name "*.swift" | sort
+
+          echo ""
+          echo "=== Checking Screen files ==="
+
+          test -f iADBApp/ScreenView.swift
+          test -f iADBApp/ScreenViewModel.swift
+
+          echo "ScreenView.swift OK"
+          echo "ScreenViewModel.swift OK"
 
       - name: Build archive
         run: |
@@ -277,32 +301,40 @@ jobs:
           echo "=== APP PATH ==="
           echo "$APP_PATH"
 
+          echo ""
           echo "=== APP CONTENTS ==="
           find "$APP_PATH" -maxdepth 2 -print | sort
 
+          echo ""
           echo "=== Info.plist ==="
 
           if [ ! -f "$APP_PATH/Info.plist" ]; then
-            echo "ERROR: Info.plist is missing from the application bundle!"
+            echo "ERROR: Info.plist is missing!"
             exit 1
           fi
 
           ls -lh "$APP_PATH/Info.plist"
 
+          echo ""
           echo "=== Bundle information ==="
 
-          /usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" \
+          /usr/libexec/PlistBuddy \
+            -c "Print :CFBundleIdentifier" \
             "$APP_PATH/Info.plist"
 
-          /usr/libexec/PlistBuddy -c "Print :CFBundleVersion" \
+          /usr/libexec/PlistBuddy \
+            -c "Print :CFBundleVersion" \
             "$APP_PATH/Info.plist"
 
-          /usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" \
+          /usr/libexec/PlistBuddy \
+            -c "Print :CFBundleShortVersionString" \
             "$APP_PATH/Info.plist"
 
-          /usr/libexec/PlistBuddy -c "Print :CFBundleExecutable" \
+          /usr/libexec/PlistBuddy \
+            -c "Print :CFBundleExecutable" \
             "$APP_PATH/Info.plist"
 
+          echo ""
           echo "=== Executable ==="
 
           EXECUTABLE=$(
@@ -318,6 +350,7 @@ jobs:
 
           ls -lh "$APP_PATH/$EXECUTABLE"
 
+          echo ""
           echo "=== Bundle verification OK ==="
 
       - name: Create IPA
@@ -343,12 +376,16 @@ jobs:
           cp -R "$APP_PATH" build/Payload/
 
           cd build
+
           zip -r iADB.ipa Payload
+
           cd ..
 
+          echo ""
           echo "=== IPA ==="
           ls -lh build/iADB.ipa
 
+          echo ""
           echo "=== IPA CONTENTS ==="
           unzip -l build/iADB.ipa
 
