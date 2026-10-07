@@ -27,7 +27,7 @@ final class ADBViewModel: ObservableObject {
     @Published var sdkVersion = "-"
     @Published var battery = "-"
 
-    private var client: ADBClient?
+    var client: ADBClient?
 
     init() {
         host = UserDefaults.standard.string(forKey: "adb.host") ?? "100.100.10.1"
